@@ -1,0 +1,125 @@
+﻿#!/bin/bash
+#make Linux
+#磁盘操作
+gdisk /dev/sdb
+n
+
+
+
+EF02
+w
+y
+#编译复制内核
+make clean
+make bzimage
+make modules
+make modules_install
+mkdir /mnt/boot
+mount /dev/sdb2 /mnt/boot/
+mkinitramfs -o ./mnt/boot/initrd
+cp /home/linux/doc/linux/arch/x86/linux/boot/bzimage /mnt/boot/
+make clean
+#安装引导(grub2)
+umount /dev/sdb2 /mnt/boot/
+mount /dev/sdb1 /mnt/boot/
+grub-install --target=i386-pc --recheck --boot-directory=/mnt/boot /dev/sdb --removable
+grub-install --root-directory=/mnt/boot /dev/sdb
+umount /dev/sdb1 /mnt/boot/
+#创建根目录下的文件夹
+rm -d /mnt/boot
+mkdir /mnt/root
+mount /dev/sdb3 /mnt/root/
+mkdir -pv /mnt/root/{etc,lib,lib64,bin,sbin,tmp,var,usr,sys,proc,opt,home,root,boot,dev,mnt,media}
+#制作CUI复制外部命令
+#判断用户输入的命令是不是命令
+com() {
+    local var1
+    man $1 &>/dev/null
+    var1=$?
+    if [ $var1 -eq 0 ];then
+        return 0
+    else
+        echo -e "\terror,找不到\e[33m${1}命令\e[0m，您请确认！"
+        return 1
+    fi
+
+}
+#判断命令是内部命令还是外部命令
+encmd() {
+    local var2=`type $1`
+    local var3=`echo $var2 | grep -o "builtin"`
+    if [ -n "$var3" ];then
+        echo -e "\terror,\e[34m${CMD}是内部命令\e[0m，不可以复制！"
+        return 1
+    else
+        return 0
+    fi
+}
+#判断文件类型的函数
+filetype() {
+    file=`ls -l $1 | grep -o "^."`
+    case $file in
+            -)
+            return 0
+                    ;;
+            d)
+            return 1
+                    ;;
+            l)
+            return 2
+                    ;;
+        esac
+}
+#创建目录的函数
+createdir() {
+    local dirnm=`dirname $1`
+    mkdir -p ${Dir}${dirnm}
+    targetdir=${Dir}${dirnm}
+    return 0
+}
+
+#复制文件的函数
+copy() {
+    filetype $1
+    local ft=$?
+    if [ $ft -eq 0 ];then
+        createdir $1
+        cp -pdr $1 $targetdir &> /dev/null
+        echo -e "\t\t$1\t\c"
+        echo -e "========>\t\c"
+        echo -e "\e[31m${targetdir}\e[0m"
+        return 0
+    elif [ $ft -eq 2 ];then
+        createdir $1
+        cp -pdr $1 $targetdir &> /dev/null
+        echo -e "\t\t$1\t\c"
+        echo -e "========>\t\c"
+        echo -e "\e[31m${targetdir}\e[0m"
+        lianjiewenjian=$(locate `ls -l $1 | cut -d " " -f 11`)
+        copy $lianjiewenjian
+    fi
+}
+
+Dir="/mnt/root"
+while true;do
+    read -p "请输入一个您想要复制的命令(quit：退出)：" cmd
+    CMD=`basename $cmd`
+    if [ "$CMD" == "quit" ];then
+        exit 1
+    fi
+    com $CMD
+    if [ $? == 0 ];then
+        encmd $CMD
+        encmd=$?
+        if [ $encmd -eq 0 ];then
+            #因为在脚本里面不可以执行别名所以，不需要varA=`which ls | grep "^[[:space:]]" | grep  -o "/.*"`
+            varA=`which $CMD`
+            echo -e "\t\e[5;31m${CMD}命令\e[0m正在复制……"
+            copy $varA
+            for A in `for i in $(ldd $varA);do echo $i ;done | grep -o "/.*"` ;do 
+                copy $A
+            done
+            echo -e "\t\e[5;31m${CMD}命令\e[0m复制结束！"
+        fi
+    fi
+done
